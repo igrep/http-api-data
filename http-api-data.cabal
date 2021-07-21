@@ -46,6 +46,7 @@ library
 
     -- GHC bundled
     build-depends:   base                  >= 4.7      && < 4.16
+                   , attoparsec
                    , bytestring            >= 0.10.4.0 && < 0.12
                    , containers            >= 0.5.5.1  && < 0.7
                    , text                  >= 1.2.3.0  && < 1.3

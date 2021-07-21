@@ -18,9 +18,10 @@ module Web.Internal.HttpApiData where
 import           Prelude                      ()
 import           Prelude.Compat
 
-import           Control.Applicative          (Const(Const))
+import           Control.Applicative          (Const(Const), (<|>))
 import           Control.Arrow                (left, (&&&))
 import           Control.Monad                ((<=<))
+import qualified Data.Attoparsec.ByteString   as AttoB
 import qualified Data.Attoparsec.Text         as Atto
 import qualified Data.Attoparsec.Time         as Atto
 import           Data.ByteString              (ByteString)
@@ -118,15 +119,15 @@ class ToHttpApiData a where
 class FromHttpApiData a where
   {-# MINIMAL parseUrlPiece | parseQueryParam #-}
   -- | Parse URL path piece.
-  parseUrlPiece :: Text -> Either Text a
+  parseUrlPiece :: Atto.Parser a
   parseUrlPiece = parseQueryParam
 
   -- | Parse HTTP header value.
-  parseHeader :: ByteString -> Either Text a
+  parseHeader :: AttoB.Parser a
   parseHeader = parseUrlPiece <=< (left (T.pack . show) . decodeUtf8')
 
   -- | Parse query param value.
-  parseQueryParam :: Text -> Either Text a
+  parseQueryParam :: Atto.Parser a
   parseQueryParam = parseUrlPiece
 
 -- | Convert multiple values to a list of URL pieces.
@@ -829,38 +830,38 @@ instance FromHttpApiData UUID.UUID where
 --
 -- @since 0.3.5
 newtype LenientData a = LenientData { getLenientData :: Either Text a }
-    deriving (Eq, Ord, Show, Read, Typeable, Data, Functor, Foldable, Traversable)
+  deriving (Eq, Ord, Show, Read, Typeable, Data, Functor, Foldable, Traversable)
 
 instance FromHttpApiData a => FromHttpApiData (LenientData a) where
-    parseUrlPiece   = Right . LenientData . parseUrlPiece
-    parseHeader     = Right . LenientData . parseHeader
-    parseQueryParam = Right . LenientData . parseQueryParam
+  parseUrlPiece   = (LenientData . Right <$> parseUrlPiece) <|> (pure . LenientData $ Left "Lenient data")
+  parseHeader     = (LenientData . Right <$> parseHeader) <|> (pure . LenientData $ Left "Lenient data")
+  parseQueryParam = (LenientData . Right <$> parseQueryParam) <|> (pure . LenientData $ Left "Lenient data")
 
 -- | /Note:/ this instance works correctly for alphanumeric name and value
 --
 -- >>> parseUrlPiece "SESSID=r2t5uvjq435r4q7ib3vtdjq120" :: Either Text SetCookie
 -- Right (SetCookie {setCookieName = "SESSID", setCookieValue = "r2t5uvjq435r4q7ib3vtdjq120", setCookiePath = Nothing, setCookieExpires = Nothing, setCookieMaxAge = Nothing, setCookieDomain = Nothing, setCookieHttpOnly = False, setCookieSecure = False, setCookieSameSite = Nothing})
 instance FromHttpApiData SetCookie where
-  parseUrlPiece = parseHeader  . encodeUtf8
-  parseHeader   = Right . parseSetCookie
+  parseUrlPiece = parseSetCookie . encodeUtf8 <$> Atto.takeText
+  parseHeader   = parseSetCookie <$> AttoB.takeByteString
 
 -- | Note: this instance is not polykinded
 instance FromHttpApiData a => FromHttpApiData (Tagged (b :: Type) a) where
-  parseUrlPiece   = coerce (parseUrlPiece :: Text -> Either Text a)
-  parseHeader     = coerce (parseHeader :: ByteString -> Either Text a)
-  parseQueryParam = coerce (parseQueryParam :: Text -> Either Text a)
+  parseUrlPiece   = coerce (parseUrlPiece :: Atto.Parser a)
+  parseHeader     = coerce (parseHeader :: AttoB.Parser a)
+  parseQueryParam = coerce (parseQueryParam :: Atto.Parser a)
 
 -- | @since 0.4.2
 instance FromHttpApiData a => FromHttpApiData (Const a b) where
-  parseUrlPiece   = coerce (parseUrlPiece :: Text -> Either Text a)
-  parseHeader     = coerce (parseHeader :: ByteString -> Either Text a)
-  parseQueryParam = coerce (parseQueryParam :: Text -> Either Text a)
+  parseUrlPiece   = coerce (parseUrlPiece :: Atto.Parser a)
+  parseHeader     = coerce (parseHeader :: AttoB.Parser a)
+  parseQueryParam = coerce (parseQueryParam :: Atto.Parser a)
 
 -- | @since 0.4.2
 instance FromHttpApiData a => FromHttpApiData (Identity a) where
-  parseUrlPiece   = coerce (parseUrlPiece :: Text -> Either Text a)
-  parseHeader     = coerce (parseHeader :: ByteString -> Either Text a)
-  parseQueryParam = coerce (parseQueryParam :: Text -> Either Text a)
+  parseUrlPiece   = coerce (parseUrlPiece :: Atto.Parser a)
+  parseHeader     = coerce (parseHeader :: AttoB.Parser a)
+  parseQueryParam = coerce (parseQueryParam :: Atto.Parser a)
 
 -------------------------------------------------------------------------------
 -- Attoparsec helpers
