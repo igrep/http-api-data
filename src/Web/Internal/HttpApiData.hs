@@ -20,7 +20,7 @@ import           Prelude.Compat
 
 import           Control.Applicative          (Const(Const), (<|>))
 import           Control.Arrow                (left, (&&&))
-import           Control.Monad                ((<=<))
+import           Control.Monad                (when, (<=<))
 import qualified Data.Attoparsec.ByteString   as AttoB
 import qualified Data.Attoparsec.Text         as Atto
 import qualified Data.Attoparsec.Time         as Atto
@@ -255,12 +255,10 @@ showt = T.pack . show
 -- >>> instance FromHttpApiData Foo where parseUrlPiece s = Foo <$> parseUrlPieceWithPrefix "Foo " s
 -- >>> parseUrlPiece "foo 1" :: Either Text Foo
 -- Right (Foo 1)
-parseUrlPieceWithPrefix :: FromHttpApiData a => Text -> Text -> Either Text a
-parseUrlPieceWithPrefix pattern input
-  | T.toLower pattern == T.toLower prefix = parseUrlPiece rest
-  | otherwise                             = defaultParseError input
-  where
-    (prefix, rest) = T.splitAt (T.length pattern) input
+parseUrlPieceWithPrefix :: FromHttpApiData a => Text -> Atto.Parser a
+parseUrlPieceWithPrefix pattern = do
+  _ <- Atto.asciiCI pattern
+  parseUrlPiece
 
 -- | Parse given bytestring then parse the rest of the input using @'parseHeader'@.
 --
@@ -411,12 +409,12 @@ runReader reader input =
 --
 -- >>> parseBounded decimal "256" :: Either Text Word8
 -- Left "out of bounds: `256' (should be between 0 and 255)"
-parseBounded :: forall a. (Bounded a, Integral a) => Reader Integer -> Text -> Either Text a
-parseBounded reader input = do
-  n <- runReader reader input
-  if (n > h || n < l)
-    then Left  ("out of bounds: `" <> input <> "' (should be between " <> showt l <> " and " <> showt h <> ")")
-    else Right (fromInteger n)
+parseBounded :: forall a. (Bounded a, Integral a) => Atto.Parser Integer -> Atto.Parser a
+parseBounded p = do
+  n <- p
+  when (n > h || n < l) $
+    fail ("out of bounds: `" <> show n <> "' (should be between " <> show l <> " and " <> show h <> ")")
+  pure $ fromInteger n
   where
     l = toInteger (minBound :: a)
     h = toInteger (maxBound :: a)
@@ -695,41 +693,41 @@ instance FromHttpApiData Natural where
 
 instance FromHttpApiData Bool     where parseUrlPiece = parseBoundedUrlPiece
 instance FromHttpApiData Ordering where parseUrlPiece = parseBoundedUrlPiece
-instance FromHttpApiData Double   where parseUrlPiece = runReader rational
-instance FromHttpApiData Float    where parseUrlPiece = runReader rational
-instance FromHttpApiData Int      where parseUrlPiece = parseBounded (signed decimal)
-instance FromHttpApiData Int8     where parseUrlPiece = parseBounded (signed decimal)
-instance FromHttpApiData Int16    where parseUrlPiece = parseBounded (signed decimal)
-instance FromHttpApiData Int32    where parseUrlPiece = parseBounded (signed decimal)
-instance FromHttpApiData Int64    where parseUrlPiece = parseBounded (signed decimal)
-instance FromHttpApiData Integer  where parseUrlPiece = runReader (signed decimal)
-instance FromHttpApiData Word     where parseUrlPiece = parseBounded decimal
-instance FromHttpApiData Word8    where parseUrlPiece = parseBounded decimal
-instance FromHttpApiData Word16   where parseUrlPiece = parseBounded decimal
-instance FromHttpApiData Word32   where parseUrlPiece = parseBounded decimal
-instance FromHttpApiData Word64   where parseUrlPiece = parseBounded decimal
-instance FromHttpApiData String   where parseUrlPiece = Right . T.unpack
-instance FromHttpApiData Text     where parseUrlPiece = Right
-instance FromHttpApiData L.Text   where parseUrlPiece = Right . L.fromStrict
+instance FromHttpApiData Double   where parseUrlPiece = Atto.rational
+instance FromHttpApiData Float    where parseUrlPiece = Atto.rational
+instance FromHttpApiData Int      where parseUrlPiece = parseBounded (Atto.signed Atto.decimal)
+instance FromHttpApiData Int8     where parseUrlPiece = parseBounded (Atto.signed Atto.decimal)
+instance FromHttpApiData Int16    where parseUrlPiece = parseBounded (Atto.signed Atto.decimal)
+instance FromHttpApiData Int32    where parseUrlPiece = parseBounded (Atto.signed Atto.decimal)
+instance FromHttpApiData Int64    where parseUrlPiece = parseBounded (Atto.signed Atto.decimal)
+instance FromHttpApiData Integer  where parseUrlPiece = Atto.signed Atto.decimal
+instance FromHttpApiData Word     where parseUrlPiece = parseBounded Atto.decimal
+instance FromHttpApiData Word8    where parseUrlPiece = parseBounded Atto.decimal
+instance FromHttpApiData Word16   where parseUrlPiece = parseBounded Atto.decimal
+instance FromHttpApiData Word32   where parseUrlPiece = parseBounded Atto.decimal
+instance FromHttpApiData Word64   where parseUrlPiece = parseBounded Atto.decimal
+instance FromHttpApiData String   where parseUrlPiece = T.unpack <$> Atto.takeText
+instance FromHttpApiData Text     where parseUrlPiece = Atto.takeText
+instance FromHttpApiData L.Text   where parseUrlPiece = Atto.takeLazyText
 
 -- | Note: this instance is not polykinded
 instance F.HasResolution a => FromHttpApiData (F.Fixed (a :: Type)) where
-    parseUrlPiece = runReader rational
+    parseUrlPiece = Atto.rational
 
 -- |
 -- >>> toGregorian <$> parseUrlPiece "2016-12-01"
 -- Right (2016,12,1)
-instance FromHttpApiData Day where parseUrlPiece = runAtto Atto.day
+instance FromHttpApiData Day where parseUrlPiece = Atto.day
 
 -- |
 -- >>> parseUrlPiece "14:55:01.333" :: Either Text TimeOfDay
 -- Right 14:55:01.333
-instance FromHttpApiData TimeOfDay where parseUrlPiece = runAtto Atto.timeOfDay
+instance FromHttpApiData TimeOfDay where parseUrlPiece = Atto.timeOfDay
 
 -- |
 -- >>> parseUrlPiece "2015-10-03T14:55:01" :: Either Text LocalTime
 -- Right 2015-10-03 14:55:01
-instance FromHttpApiData LocalTime where parseUrlPiece = runAtto Atto.localTime
+instance FromHttpApiData LocalTime where parseUrlPiece = Atto.localTime
 
 -- |
 -- >>> parseUrlPiece "2015-10-03T14:55:01+0000" :: Either Text ZonedTime
@@ -737,36 +735,33 @@ instance FromHttpApiData LocalTime where parseUrlPiece = runAtto Atto.localTime
 --
 -- >>> parseQueryParam "2016-12-31T01:00:00Z" :: Either Text ZonedTime
 -- Right 2016-12-31 01:00:00 +0000
-instance FromHttpApiData ZonedTime where parseUrlPiece = runAtto Atto.zonedTime
+instance FromHttpApiData ZonedTime where parseUrlPiece = Atto.zonedTime
 
 -- |
 -- >>> parseUrlPiece "2015-10-03T00:14:24Z" :: Either Text UTCTime
 -- Right 2015-10-03 00:14:24 UTC
-instance FromHttpApiData UTCTime   where parseUrlPiece = runAtto Atto.utcTime
+instance FromHttpApiData UTCTime   where parseUrlPiece = Atto.utcTime
 
 -- |
 -- >>> parseUrlPiece "Monday" :: Either Text DayOfWeek
 -- Right Monday
 instance FromHttpApiData DayOfWeek where
-  parseUrlPiece t = case Map.lookup (T.toLower t) m of
-      Just dow -> Right dow
-      Nothing  -> Left $ "Incorrect DayOfWeek: " <> T.take 10 t
+  parseUrlPiece = foldr ((<>) . f) (fail "Invalid DayOfWeek") [Monday .. Sunday]
     where
-      m :: Map.Map Text DayOfWeek
-      m = Map.fromList [ (toUrlPiece dow, dow) | dow <- [Monday .. Sunday] ]
+      f dow = dow <$ Atto.asciiCI (toUrlPiece dow)
 
 
-instance FromHttpApiData NominalDiffTime where parseUrlPiece = fmap secondsToNominalDiffTime . parseUrlPiece
+instance FromHttpApiData NominalDiffTime where parseUrlPiece = secondsToNominalDiffTime <$> parseUrlPiece
 
 -- |
 -- >>> parseUrlPiece "2021-01" :: Either Text Month
 -- Right 2021-01
-instance FromHttpApiData Month where parseUrlPiece = runAtto Atto.month
+instance FromHttpApiData Month where parseUrlPiece = Atto.month
 
 -- |
 -- >>> parseUrlPiece "2021-q1" :: Either Text Quarter
 -- Right 2021-Q1
-instance FromHttpApiData Quarter where parseUrlPiece = runAtto Atto.quarter
+instance FromHttpApiData Quarter where parseUrlPiece = Atto.quarter
 
 -- |
 -- >>> parseUrlPiece "q2" :: Either Text QuarterOfYear
@@ -775,46 +770,39 @@ instance FromHttpApiData Quarter where parseUrlPiece = runAtto Atto.quarter
 -- >>> parseUrlPiece "Q3" :: Either Text QuarterOfYear
 -- Right Q3
 instance FromHttpApiData QuarterOfYear where
-    parseUrlPiece t = case T.toLower t of
-        "q1"  -> return Q1
-        "q2"  -> return Q2
-        "q3"  -> return Q3
-        "q4"  -> return Q4
-        _     -> Left "Invalid quarter of year"
+    parseUrlPiece = do
+      _ <- Atto.satisfy $ \c -> c == "q" || c == "Q"
+      Q1 <$ Atto.char '1' <|> Q2 <$ Atto.char '2' <|> Q3 <$ Atto.char '3' <|> Q4 <$ Atto.char '4'
 
-instance FromHttpApiData All where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text Bool)
-instance FromHttpApiData Any where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text Bool)
+instance FromHttpApiData All where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser Bool)
+instance FromHttpApiData Any where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser Bool)
 
-instance FromHttpApiData a => FromHttpApiData (Dual a)    where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text a)
-instance FromHttpApiData a => FromHttpApiData (Sum a)     where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text a)
-instance FromHttpApiData a => FromHttpApiData (Product a) where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text a)
-instance FromHttpApiData a => FromHttpApiData (First a)   where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text (Maybe a))
-instance FromHttpApiData a => FromHttpApiData (Last a)    where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text (Maybe a))
+instance FromHttpApiData a => FromHttpApiData (Dual a)    where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser a)
+instance FromHttpApiData a => FromHttpApiData (Sum a)     where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser a)
+instance FromHttpApiData a => FromHttpApiData (Product a) where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser a)
+instance FromHttpApiData a => FromHttpApiData (First a)   where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser (Maybe a))
+instance FromHttpApiData a => FromHttpApiData (Last a)    where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser (Maybe a))
 
-instance FromHttpApiData a => FromHttpApiData (Semi.Min a)    where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text a)
-instance FromHttpApiData a => FromHttpApiData (Semi.Max a)    where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text a)
-instance FromHttpApiData a => FromHttpApiData (Semi.First a)  where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text a)
-instance FromHttpApiData a => FromHttpApiData (Semi.Last a)   where parseUrlPiece = coerce (parseUrlPiece :: Text -> Either Text a)
+instance FromHttpApiData a => FromHttpApiData (Semi.Min a)    where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser a)
+instance FromHttpApiData a => FromHttpApiData (Semi.Max a)    where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser a)
+instance FromHttpApiData a => FromHttpApiData (Semi.First a)  where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser a)
+instance FromHttpApiData a => FromHttpApiData (Semi.Last a)   where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser a)
 
 -- |
 -- >>> parseUrlPiece "Just 123" :: Either Text (Maybe Int)
 -- Right (Just 123)
 instance FromHttpApiData a => FromHttpApiData (Maybe a) where
-  parseUrlPiece s
-    | T.toLower (T.take 7 s) == "nothing" = pure Nothing
-    | otherwise                           = Just <$> parseUrlPieceWithPrefix "Just " s
+  parseUrlPiece =
+    Nothing <$ Atto.asciiCI "nothing"
+      <|> Just <$> parseUrlPieceWithPrefix "Just "
 
 -- |
 -- >>> parseUrlPiece "Right 123" :: Either Text (Either String Int)
 -- Right (Right 123)
 instance (FromHttpApiData a, FromHttpApiData b) => FromHttpApiData (Either a b) where
-  parseUrlPiece s =
-        Right <$> parseUrlPieceWithPrefix "Right " s
-    <!> Left  <$> parseUrlPieceWithPrefix "Left " s
-    where
-      infixl 3 <!>
-      Left _ <!> y = y
-      x      <!> _ = x
+  parseUrlPiece =
+        Right <$> parseUrlPieceWithPrefix "Right "
+    <|> Left  <$> parseUrlPieceWithPrefix "Left "
 
 instance ToHttpApiData UUID.UUID where
     toUrlPiece = UUID.toText
@@ -822,8 +810,12 @@ instance ToHttpApiData UUID.UUID where
     toEncodedUrlPiece = unsafeToEncodedUrlPiece
 
 instance FromHttpApiData UUID.UUID where
-    parseUrlPiece = maybe (Left "invalid UUID") Right . UUID.fromText
-    parseHeader   = maybe (Left "invalid UUID") Right . UUID.fromASCIIBytes
+    parseUrlPiece = do
+      bytes <- Atto.take 36
+      maybe (fail "invalid UUID") pure $ UUID.fromText bytes
+    parseHeader   = do
+      bytes <- AttoB.take 36
+      maybe (fail "invalid UUID") pure $ UUID.fromASCIIBytes bytes
 
 
 -- | Lenient parameters. 'FromHttpApiData' combinators always return `Right`.
