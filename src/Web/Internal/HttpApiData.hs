@@ -362,8 +362,10 @@ parseBoundedEnumOfI f = parseBoundedEnumOf (T.toLower . f) . T.toLower
 --
 -- Parse values case insensitively based on @'ToHttpApiData'@ instance.
 -- Uses @'toUrlPiece'@ to get possible values.
-parseBoundedUrlPiece :: (ToHttpApiData a, Bounded a, Enum a) => Text -> Either Text a
-parseBoundedUrlPiece = parseBoundedEnumOfI toUrlPiece
+parseBoundedUrlPiece :: (ToHttpApiData a, Bounded a, Enum a) => String -> Atto.Parser a
+parseBoundedUrlPiece typeName = foldr ((<>) . f) (fail ("Invalid " ++ typeName)) [minBound .. maxBound]
+  where
+    f x = x <$ Atto.asciiCI (toUrlPiece x)
 
 -- | /Case insensitive/.
 --
@@ -682,17 +684,20 @@ instance FromHttpApiData Version where
 
 -- | Parsing a @'Void'@ value is always an error, considering @'Void'@ as a data type with no constructors.
 instance FromHttpApiData Void where
-  parseUrlPiece _ = Left "Void cannot be parsed!"
+  parseUrlPiece = fail "Void cannot be parsed!"
+
+--   ReadP
+--   Version
 
 instance FromHttpApiData Natural where
-  parseUrlPiece s = do
-    n <- runReader (signed decimal) s
+  parseUrlPiece = do
+    n <- Atto.signed Atto.decimal
     if n < 0
-      then Left ("underflow: " <> s <> " (should be a non-negative integer)")
-      else Right (fromInteger n)
+      then fail ("underflow: " <> show n <> " (should be a non-negative integer)")
+      else pure (fromInteger n)
 
-instance FromHttpApiData Bool     where parseUrlPiece = parseBoundedUrlPiece
-instance FromHttpApiData Ordering where parseUrlPiece = parseBoundedUrlPiece
+instance FromHttpApiData Bool     where parseUrlPiece = parseBoundedUrlPiece "Bool"
+instance FromHttpApiData Ordering where parseUrlPiece = parseBoundedUrlPiece "Ordering"
 instance FromHttpApiData Double   where parseUrlPiece = Atto.rational
 instance FromHttpApiData Float    where parseUrlPiece = Atto.rational
 instance FromHttpApiData Int      where parseUrlPiece = parseBounded (Atto.signed Atto.decimal)
