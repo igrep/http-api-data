@@ -9,23 +9,14 @@ module Web.HttpApiData (
   ToHttpApiData (..),
   FromHttpApiData (..),
 
-  -- * @'Maybe'@ parsers
-  parseUrlPieceMaybe,
-  parseHeaderMaybe,
-  parseQueryParamMaybe,
-
   -- * Prefix parsers
   parseUrlPieceWithPrefix,
-  parseHeaderWithPrefix,
-  parseQueryParamWithPrefix,
 
   -- * Multiple URL pieces
   toUrlPieces,
-  parseUrlPieces,
 
   -- * Multiple query params
   toQueryParams,
-  parseQueryParams,
 
   -- * Parsers for @'Bounded'@ @'Enum'@s
   parseBoundedUrlPiece,
@@ -89,4 +80,3 @@ import           Web.Internal.HttpApiData
 -- "2015-10-03"
 -- >>> toGregorian <$> parseQueryParam "2016-12-01"
 -- Right (2016,12,1)
-

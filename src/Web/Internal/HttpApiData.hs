@@ -19,25 +19,24 @@ import           Prelude                      ()
 import           Prelude.Compat
 
 import           Control.Applicative          (Const(Const), (<|>))
-import           Control.Arrow                (left, (&&&))
-import           Control.Monad                (when, (<=<))
+import           Control.Arrow                ((&&&))
+import           Control.Monad                (when)
 import qualified Data.Attoparsec.ByteString   as AttoB
 import qualified Data.Attoparsec.Text         as Atto
 import qualified Data.Attoparsec.Time         as Atto
+import           Data.Bifunctor               (first)
 import           Data.ByteString              (ByteString)
-import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Builder      as BS
 import qualified Data.ByteString.Lazy         as LBS
 import           Data.Coerce                  (coerce)
 import           Data.Data                    (Data)
 import qualified Data.Fixed                   as F
+import           Data.Functor (void)
 import           Data.Functor.Identity        (Identity(Identity))
 import           Data.Int                     (Int16, Int32, Int64, Int8)
-import qualified Data.Map                     as Map
 import           Data.Monoid                  (All (..), Any (..), Dual (..),
                                                First (..), Last (..),
                                                Product (..), Sum (..))
-import           Data.Semigroup               (Semigroup (..))
 import qualified Data.Semigroup               as Semi
 import           Data.Tagged                  (Tagged (..))
 import           Data.Text                    (Text)
@@ -46,8 +45,7 @@ import           Data.Text.Encoding           (decodeUtf8', decodeUtf8With,
                                                encodeUtf8)
 import           Data.Text.Encoding.Error     (lenientDecode)
 import qualified Data.Text.Lazy               as L
-import           Data.Text.Read               (Reader, decimal, rational,
-                                               signed)
+import           Data.Text.Read               (Reader)
 import           Data.Time.Compat             (Day, FormatTime, LocalTime,
                                                NominalDiffTime, TimeOfDay,
                                                UTCTime, ZonedTime, formatTime,
@@ -61,13 +59,11 @@ import           Data.Time.Calendar.Quarter.Compat (Quarter, QuarterOfYear (..),
                                                toYearQuarter)
 import           Data.Typeable                (Typeable)
 import qualified Data.UUID.Types              as UUID
-import           Data.Version                 (Version, parseVersion,
-                                               showVersion)
+import           Data.Version                 (Version, showVersion)
 import           Data.Void                    (Void, absurd)
 import           Data.Word                    (Word16, Word32, Word64, Word8)
 import qualified Network.HTTP.Types           as H
 import           Numeric.Natural              (Natural)
-import           Text.ParserCombinators.ReadP (readP_to_S)
 import           Text.Read                    (readMaybe)
 import           Web.Cookie                   (SetCookie, parseSetCookie,
                                                renderSetCookie)
@@ -83,10 +79,7 @@ import           TextShow                     (TextShow, showt)
 #endif
 
 -- $setup
--- >>> data BasicAuthToken = BasicAuthToken Text deriving (Show)
--- >>> instance FromHttpApiData BasicAuthToken where parseHeader h = BasicAuthToken <$> parseHeaderWithPrefix "Basic " h; parseQueryParam p = BasicAuthToken <$> parseQueryParam p
 -- >>> import Data.Time.Compat
--- >>> import Data.Version
 
 -- | Convert value to HTTP API data.
 --
@@ -123,8 +116,13 @@ class FromHttpApiData a where
   parseUrlPiece = parseQueryParam
 
   -- | Parse HTTP header value.
+  -- FIXME: Very naive implementation.
   parseHeader :: AttoB.Parser a
-  parseHeader = parseUrlPiece <=< (left (T.pack . show) . decodeUtf8')
+  parseHeader = do
+    s <- AttoB.takeByteString
+    either fail pure $ do
+      t <- first show $ decodeUtf8' s
+      Atto.parseOnly parseUrlPiece t
 
   -- | Parse query param value.
   parseQueryParam :: Atto.Parser a
@@ -137,51 +135,12 @@ class FromHttpApiData a where
 toUrlPieces :: (Functor t, ToHttpApiData a) => t a -> t Text
 toUrlPieces = fmap toUrlPiece
 
--- | Parse multiple URL pieces.
---
--- >>> parseUrlPieces ["true", "false"] :: Either Text [Bool]
--- Right [True,False]
--- >>> parseUrlPieces ["123", "hello", "world"] :: Either Text [Int]
--- Left "could not parse: `hello' (input does not start with a digit)"
-parseUrlPieces :: (Traversable t, FromHttpApiData a) => t Text -> Either Text (t a)
-parseUrlPieces = traverse parseUrlPiece
-
 -- | Convert multiple values to a list of query parameter values.
 --
 -- >>> toQueryParams [fromGregorian 2015 10 03, fromGregorian 2015 12 01] :: [Text]
 -- ["2015-10-03","2015-12-01"]
 toQueryParams :: (Functor t, ToHttpApiData a) => t a -> t Text
 toQueryParams = fmap toQueryParam
-
--- | Parse multiple query parameters.
---
--- >>> parseQueryParams ["1", "2", "3"] :: Either Text [Int]
--- Right [1,2,3]
--- >>> parseQueryParams ["64", "128", "256"] :: Either Text [Word8]
--- Left "out of bounds: `256' (should be between 0 and 255)"
-parseQueryParams :: (Traversable t, FromHttpApiData a) => t Text -> Either Text (t a)
-parseQueryParams = traverse parseQueryParam
-
--- | Parse URL path piece in a @'Maybe'@.
---
--- >>> parseUrlPieceMaybe "12" :: Maybe Int
--- Just 12
-parseUrlPieceMaybe :: FromHttpApiData a => Text -> Maybe a
-parseUrlPieceMaybe = either (const Nothing) Just . parseUrlPiece
-
--- | Parse HTTP header value in a @'Maybe'@.
---
--- >>> parseHeaderMaybe "hello" :: Maybe Text
--- Just "hello"
-parseHeaderMaybe :: FromHttpApiData a => ByteString -> Maybe a
-parseHeaderMaybe = either (const Nothing) Just . parseHeader
-
--- | Parse query param value in a @'Maybe'@.
---
--- >>> parseQueryParamMaybe "true" :: Maybe Bool
--- Just True
-parseQueryParamMaybe :: FromHttpApiData a => Text -> Maybe a
-parseQueryParamMaybe = either (const Nothing) Just . parseQueryParam
 
 -- | Default parsing error.
 defaultParseError :: Text -> Either Text a
@@ -259,37 +218,6 @@ parseUrlPieceWithPrefix :: FromHttpApiData a => Text -> Atto.Parser a
 parseUrlPieceWithPrefix pattern = do
   _ <- Atto.asciiCI pattern
   parseUrlPiece
-
--- | Parse given bytestring then parse the rest of the input using @'parseHeader'@.
---
--- @
--- data BasicAuthToken = BasicAuthToken Text deriving (Show)
---
--- instance FromHttpApiData BasicAuthToken where
---   parseHeader h     = BasicAuthToken \<$\> parseHeaderWithPrefix "Basic " h
---   parseQueryParam p = BasicAuthToken \<$\> parseQueryParam p
--- @
---
--- >>> parseHeader "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==" :: Either Text BasicAuthToken
--- Right (BasicAuthToken "QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
-parseHeaderWithPrefix :: FromHttpApiData a => ByteString -> ByteString -> Either Text a
-parseHeaderWithPrefix pattern input
-  | pattern `BS.isPrefixOf` input = parseHeader (BS.drop (BS.length pattern) input)
-  | otherwise                     = defaultParseError (showt input)
-
--- | /Case insensitive/.
---
--- Parse given text case insensitive and then parse the rest of the input
--- using @'parseQueryParam'@.
---
--- >>> parseQueryParamWithPrefix "z" "z10" :: Either Text Int
--- Right 10
-parseQueryParamWithPrefix :: FromHttpApiData a => Text -> Text -> Either Text a
-parseQueryParamWithPrefix pattern input
-  | T.toLower pattern == T.toLower prefix = parseQueryParam rest
-  | otherwise                             = defaultParseError input
-  where
-    (prefix, rest) = T.splitAt (T.length pattern) input
 
 #if USE_TEXT_SHOW
 -- | /Case insensitive/.
@@ -664,30 +592,14 @@ instance ToHttpApiData a => ToHttpApiData (Identity a) where
 -- >>> parseUrlPiece "_" :: Either Text ()
 -- Right ()
 instance FromHttpApiData () where
-  parseUrlPiece "_" = pure ()
-  parseUrlPiece s   = defaultParseError s
+  parseUrlPiece = void $ Atto.char '_'
 
 instance FromHttpApiData Char where
-  parseUrlPiece s =
-    case T.uncons s of
-      Just (c, s') | T.null s' -> pure c
-      _            -> defaultParseError s
-
--- |
--- >>> showVersion <$> parseUrlPiece "1.2.3"
--- Right "1.2.3"
-instance FromHttpApiData Version where
-  parseUrlPiece s =
-    case reverse (readP_to_S parseVersion (T.unpack s)) of
-      ((x, ""):_) -> pure x
-      _           -> defaultParseError s
+  parseUrlPiece = Atto.anyChar
 
 -- | Parsing a @'Void'@ value is always an error, considering @'Void'@ as a data type with no constructors.
 instance FromHttpApiData Void where
   parseUrlPiece = fail "Void cannot be parsed!"
-
---   ReadP
---   Version
 
 instance FromHttpApiData Natural where
   parseUrlPiece = do
@@ -776,7 +688,7 @@ instance FromHttpApiData Quarter where parseUrlPiece = Atto.quarter
 -- Right Q3
 instance FromHttpApiData QuarterOfYear where
     parseUrlPiece = do
-      _ <- Atto.satisfy $ \c -> c == "q" || c == "Q"
+      _ <- Atto.satisfy $ \c -> c == 'q' || c == 'Q'
       Q1 <$ Atto.char '1' <|> Q2 <$ Atto.char '2' <|> Q3 <$ Atto.char '3' <|> Q4 <$ Atto.char '4'
 
 instance FromHttpApiData All where parseUrlPiece = coerce (parseUrlPiece :: Atto.Parser Bool)
