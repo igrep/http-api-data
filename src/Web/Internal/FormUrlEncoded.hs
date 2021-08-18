@@ -24,6 +24,7 @@ import           Control.Applicative               (Const (Const))
 import           Control.Arrow                     ((***))
 import           Control.Monad                     ((<=<))
 import qualified Data.Attoparsec.Text              as Atto
+import           Data.Bifunctor                    (first)
 import           Data.ByteString.Builder           (shortByteString,
                                                     toLazyByteString)
 import qualified Data.ByteString.Lazy              as BSL
@@ -447,9 +448,9 @@ instance FromHttpApiData v => FromForm (IntMap [v]) where
 -- _NOTE:_ this conversion is unstable and may result in different key order
 -- (but not values). For a stable encoding see 'toEntriesByKeyStable'.
 toEntriesByKey :: (FromFormKey k, FromHttpApiData v) => Form -> Either Text [(k, [v])]
-toEntriesByKey = traverse parseGroup . HashMap.toList . unForm
+toEntriesByKey = first Text.pack . traverse parseGroup . HashMap.toList . unForm
   where
-    parseGroup (k, vs) = (,) <$> parseFormKey k <*> traverse parseQueryParam vs
+    parseGroup (k, vs) = (,) <$> Atto.parseOnly parseFormKey k <*> traverse (Atto.parseOnly parseQueryParam) vs
 
 -- | Parse a 'Form' into a list of entries groupped by key.
 --
@@ -751,7 +752,9 @@ parseMaybe key = parseQueryParams <=< lookupMaybe key
 -- >>> parseUnique "age" [("age", "7")] :: Either Text Word8
 -- Right 7
 parseUnique :: FromHttpApiData v => Text -> Form -> Either Text v
-parseUnique key form = lookupUnique key form >>= parseOnly parseQueryParam
+parseUnique key form =
+  lookupUnique key form >>=
+    first Text.pack . Atto.parseOnly (parseQueryParam <* Atto.endOfInput)
 
 -- | 'Generic'-based deriving options for 'ToForm' and 'FromForm'.
 --

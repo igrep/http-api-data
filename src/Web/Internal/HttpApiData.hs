@@ -153,6 +153,15 @@ parseMaybeTextData parse input =
     Nothing  -> defaultParseError input
     Just val -> Right val
 
+-- | Parse multiple query parameters.
+--
+-- >>> parseQueryParams ["1", "2", "3"] :: Either Text [Int]
+-- Right [1,2,3]
+-- >>> parseQueryParams ["64", "128", "256"] :: Either Text [Word8]
+-- Left "out of bounds: `256' (should be between 0 and 255)"
+parseQueryParams :: (Traversable t, FromHttpApiData a) => t Text -> Either Text (t a)
+parseQueryParams = first T.pack . traverse (Atto.parseOnly (parseQueryParam <* Atto.endOfInput))
+
 #if USE_TEXT_SHOW
 -- | /Lower case/.
 --
