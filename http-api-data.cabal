@@ -25,12 +25,6 @@ extra-source-files:
   README.md
 
 tested-with:
-  GHC==7.8.4,
-  GHC==7.10.3,
-  GHC==8.0.2,
-  GHC==8.2.2,
-  GHC==8.4.4,
-  GHC==8.6.5,
   GHC==8.8.4,
   GHC==8.10.4,
   GHC==9.0.1
@@ -45,7 +39,7 @@ library
     include-dirs:   include/
 
     -- GHC bundled
-    build-depends:   base                  >= 4.7      && < 4.16
+    build-depends:   base                  >= 4.7      && < 4.19
                    , attoparsec
                    , bytestring            >= 0.10.4.0 && < 0.12
                    , containers            >= 0.5.5.1  && < 0.7
@@ -60,9 +54,9 @@ library
     build-depends:
                      attoparsec            >= 0.13.2.2 && < 0.15
                    , attoparsec-iso8601    >= 1.0.2.0  && < 1.1
-                   , base-compat           >= 0.10.5   && < 0.12
+                   , base-compat           >= 0.10.5   && < 0.13
                    , cookie                >= 0.4.3    && < 0.5
-                   , hashable              >= 1.2.7.0  && < 1.4
+                   , hashable              >= 1.2.7.0  && < 1.5
                    , http-types            >= 0.12.3   && < 0.13
                    , tagged                >= 0.8.5    && < 0.9
                    , time-compat           >= 1.9.5    && < 1.10
